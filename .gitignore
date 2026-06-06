@@ -1,0 +1,8 @@
+# Project place file
+/echoes-of-the-fallen-garden.rbxlx
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+sourcemap.json
