@@ -33,14 +33,26 @@ local CombatService = require(script.Parent.Services.Combat.CombatService)
 -- 3. Iniciar Servicios
 CombatService:Start(requestActionRemote)
 
--- 4. Escuchar cuando entran jugadores
-Players.PlayerAdded:Connect(function(player)
+-- 4. Helper para inicializar un jugador completo
+local function initializePlayer(player)
 	StaminaService:InitializePlayer(player)
-	
+
 	player.CharacterAdded:Connect(function(character)
-		-- Darle un estado inicial al personaje
 		character:SetAttribute("CombatState", "Idle")
 	end)
-end)
+
+	-- Si el personaje ya existe (ej. "Play Here" en Studio)
+	if player.Character then
+		player.Character:SetAttribute("CombatState", "Idle")
+	end
+end
+
+-- 5. Escuchar nuevos jugadores
+Players.PlayerAdded:Connect(initializePlayer)
+
+-- 6. Bootstrap: jugadores que ya estaban al correr el script (modo "Play Here")
+for _, player in ipairs(Players:GetPlayers()) do
+	initializePlayer(player)
+end
 
 print("[SERVER] Arquitectura del Servidor Iniciada.")

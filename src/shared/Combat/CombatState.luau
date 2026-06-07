@@ -1,65 +1,94 @@
+-- src/shared/Combat/CombatState.luau
 local CombatState = {}
 
+-- Estados sincronizados con CombatConfig.States
 CombatState.States = {
-    Idle = "Idle",
-    Attacking = "Attacking",
-    Dodging = "Dodging",
-    Stunned = "Stunned",
+	Idle      = "Idle",
+	Attacking = "Attacking",
+	Dodging   = "Dodging",
+	Stunned   = "Stunned",
+	Parrying  = "Parrying",
+	Dead      = "Dead",
 }
 
--- Minimal finite-state-machine implementation to allow client code to run
+-- Transiciones válidas: qué estados puede originar cada acción.
+-- El servidor y el cliente usan esta misma tabla para validar.
+CombatState.ValidTransitions = {
+	Attacking = { Idle = true, Dodging = true },
+	Dodging   = { Idle = true, Attacking = true },
+	Stunned   = { Idle = true, Attacking = true, Dodging = true },
+	Parrying  = { Idle = true },
+	Idle      = { Attacking = true, Dodging = true, Stunned = true, Parrying = true },
+	Dead      = { Idle = true, Attacking = true, Dodging = true, Stunned = true },
+}
+
+-- Retorna true si la transición de `fromState` a `toState` es válida.
+function CombatState.canTransition(fromState, toState)
+	local allowed = CombatState.ValidTransitions[toState]
+	return allowed ~= nil and allowed[fromState] == true
+end
+
+-- ─── Máquina de estados por personaje (cliente) ──────────────────────────────
+
 function CombatState.createMachine(_character)
-    local state = CombatState.States.Idle
-    local listeners = {}
+	local state     = CombatState.States.Idle
+	local listeners = {}
 
-    local machine = {}
+	local machine = {}
 
-    function machine:GetState()
-        return state
-    end
+	function machine:GetState()
+		return state
+	end
 
-    function machine:Connect(fn)
-        table.insert(listeners, fn)
-        return {
-            Disconnect = function()
-                for i, v in ipairs(listeners) do
-                    if v == fn then
-                        table.remove(listeners, i)
-                        break
-                    end
-                end
-            end
-        }
-    end
+	-- Suscribe un listener fn(newState, oldState). Retorna { Disconnect() }.
+	function machine:Connect(fn)
+		table.insert(listeners, fn)
+		return {
+			Disconnect = function()
+				for i, v in ipairs(listeners) do
+					if v == fn then
+						table.remove(listeners, i)
+						break
+					end
+				end
+			end,
+		}
+	end
 
-    function machine:TransitionTo(newState, duration)
-        if newState == state then
-            return false
-        end
+	-- Intenta transicionar al nuevo estado.
+	-- Si duration > 0, regresa automáticamente a Idle después de ese tiempo.
+	-- Retorna true si la transición fue aceptada.
+	function machine:TransitionTo(newState, duration)
+		if newState == state then return false end
 
-        local oldState = state
-        state = newState
+		-- Validar que la transición sea legal
+		if not CombatState.canTransition(state, newState) then
+			return false
+		end
 
-        for _, fn in ipairs(listeners) do
-            pcall(fn, newState, oldState)
-        end
+		local oldState = state
+		state = newState
 
-        if type(duration) == "number" and duration > 0 then
-            task.delay(duration, function()
-                if state == newState then
-                    local prev = state
-                    state = CombatState.States.Idle
-                    for _, fn in ipairs(listeners) do
-                        pcall(fn, state, prev)
-                    end
-                end
-            end)
-        end
+		for _, fn in ipairs(listeners) do
+			pcall(fn, newState, oldState)
+		end
 
-        return true
-    end
+		if type(duration) == "number" and duration > 0 then
+			task.delay(duration, function()
+				if state == newState then
+					local prev = state
+					state = CombatState.States.Idle
+					for _, fn in ipairs(listeners) do
+						pcall(fn, state, prev)
+					end
+				end
+			end)
+		end
 
-    return machine
+		return true
+	end
+
+	return machine
 end
 
 return CombatState

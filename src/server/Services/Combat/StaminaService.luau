@@ -1,76 +1,80 @@
 -- src/server/Services/Combat/StaminaService.luau
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local CombatConfig = require(ReplicatedStorage.Shared.Combat.CombatConfig)
 
 local StaminaService = {}
-local playersStamina = {} -- Diccionario para guardar la estamina de cada jugador
 
--- Inicializa a un jugador cuando entra al servidor
-function StaminaService:InitializePlayer(player)
-	playersStamina[player.UserId] = CombatConfig.Stamina.MaxStamina
-	player:SetAttribute("Stamina", CombatConfig.Stamina.MaxStamina)
-	print("[SERVER] Estamina inicializada para", player.Name)
-end
-
--- Intenta gastar estamina. Retorna true si tuvo éxito, false si no le alcanza.
-function StaminaService:TryConsumeStamina(player, amount)
-	local currentStamina = playersStamina[player.UserId] or 0
-	
-	if currentStamina >= amount then
-		playersStamina[player.UserId] = currentStamina - amount
-		player:SetAttribute("Stamina", playersStamina[player.UserId])
-		return true
-	end
-	
-	return false
-end
-
--- src/server/Services/Combat/StaminaService.luau
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local CombatConfig = require(ReplicatedStorage.Shared.Combat.CombatConfig)
-local CombatState = require(ReplicatedStorage.Shared.Combat.CombatState)
-
-local StaminaService = {}
+-- Tabla principal: userId -> { stamina, regenCooldownUntil }
 local playersStamina = {}
 
+-- ─── Inicialización / Limpieza ───────────────────────────────────────────────
+
 function StaminaService:InitializePlayer(player)
-	playersStamina[player.UserId] = CombatConfig.Stamina.MaxStamina
+	playersStamina[player.UserId] = {
+		stamina          = CombatConfig.Stamina.MaxStamina,
+		regenCooldownUntil = 0, -- timestamp en segundos (os.clock)
+	}
 	player:SetAttribute("Stamina", CombatConfig.Stamina.MaxStamina)
+	print("[STAMINA] Inicializado para", player.Name)
 end
 
+function StaminaService:CleanupPlayer(player)
+	playersStamina[player.UserId] = nil
+	print("[STAMINA] Limpiado para", player.Name)
+end
+
+-- ─── Consumo ─────────────────────────────────────────────────────────────────
+
+-- Retorna true si había suficiente estamina y la descontó.
+-- Tras consumir, aplica un cooldown de RegenDelay antes de que vuelva a regenerar.
 function StaminaService:TryConsumeStamina(player, amount)
-	local currentStamina = playersStamina[player.UserId] or 0
-	if currentStamina >= amount then
-		playersStamina[player.UserId] = currentStamina - amount
-		player:SetAttribute("Stamina", playersStamina[player.UserId])
+	local data = playersStamina[player.UserId]
+	if not data then return false end
+
+	if data.stamina >= amount then
+		data.stamina = data.stamina - amount
+		data.regenCooldownUntil = os.clock() + CombatConfig.Stamina.RegenDelay
+		player:SetAttribute("Stamina", data.stamina)
 		return true
 	end
+
 	return false
 end
 
--- ESTO ES LO NUEVO: El ciclo de regeneración
+-- ─── Bucle de Regeneración ───────────────────────────────────────────────────
+
+local REGEN_TICK = 1 -- segundos entre cada tick de regen
+
 task.spawn(function()
 	while true do
-		task.wait(2) -- Regeneramos cada 1 segundo
-		
-		for userId, stamina in pairs(playersStamina) do
-			-- Solo regeneramos si no es igual al máximo
-			if stamina < CombatConfig.Stamina.MaxStamina then
-				-- Aquí podrías agregar lógica para saber si el jugador está atacando o corriendo
-				-- Por ahora, regeneramos de forma constante
-				local newStamina = math.min(stamina + CombatConfig.Stamina.RegenRate, CombatConfig.Stamina.MaxStamina)
-				
-				playersStamina[userId] = newStamina
-				
-				-- Actualizar el atributo para que el cliente lo lea
-				local player = game.Players:GetPlayerByUserId(userId)
-				if player then
-					player:SetAttribute("Stamina", newStamina)
-				end
+		task.wait(REGEN_TICK)
+
+		local now = os.clock()
+
+		for userId, data in pairs(playersStamina) do
+			-- No regenerar si estamos en cooldown post-acción
+			if now < data.regenCooldownUntil then continue end
+			-- No regenerar si ya está al máximo
+			if data.stamina >= CombatConfig.Stamina.MaxStamina then continue end
+
+			local newStamina = math.min(
+				data.stamina + CombatConfig.Stamina.RegenRate,
+				CombatConfig.Stamina.MaxStamina
+			)
+			data.stamina = newStamina
+
+			local player = Players:GetPlayerByUserId(userId)
+			if player then
+				player:SetAttribute("Stamina", newStamina)
 			end
 		end
 	end
 end)
 
+-- Limpieza automática cuando el jugador sale
+Players.PlayerRemoving:Connect(function(player)
+	StaminaService:CleanupPlayer(player)
+end)
 
 return StaminaService
