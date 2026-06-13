@@ -2,7 +2,11 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
--- 1. Crear los RemoteEvents automáticamente si no existen
+-- 0. Forzar R6 para todos los jugadores
+local StarterPlayer = game:GetService("StarterPlayer")
+StarterPlayer.LoadCharacterAppearance = false
+
+-- 1. Crear RemoteEvents
 local remotesFolder = ReplicatedStorage.Shared:FindFirstChild("Remotes")
 if not remotesFolder then
 	remotesFolder = Instance.new("Folder")
@@ -24,33 +28,52 @@ if not requestActionRemote then
 	requestActionRemote.Parent = combatEventsFolder
 end
 
+-- RemoteEvent para que el cliente notifique el sprint al servidor
+local sprintTickRemote = combatEventsFolder:FindFirstChild("SprintTick")
+if not sprintTickRemote then
+	sprintTickRemote = Instance.new("RemoteEvent")
+	sprintTickRemote.Name = "SprintTick"
+	sprintTickRemote.Parent = combatEventsFolder
+end
+
 print("[SERVER] Remotes configurados correctamente.")
 
 -- 2. Requerir Servicios
 local StaminaService = require(script.Parent.Services.Combat.StaminaService)
-local CombatService = require(script.Parent.Services.Combat.CombatService)
+local CombatService  = require(script.Parent.Services.Combat.CombatService)
 
--- 3. Iniciar Servicios
+-- 3. Iniciar CombatService
 CombatService:Start(requestActionRemote)
 
--- 4. Helper para inicializar un jugador completo
+-- 4. Escuchar ticks de sprint desde el cliente
+-- El cliente envía cada ~0.1s cuánto tiempo lleva corriendo
+sprintTickRemote.OnServerEvent:Connect(function(player, deltaTime)
+	if type(deltaTime) ~= "number" then return end
+	deltaTime = math.clamp(deltaTime, 0, 0.5) -- sanidad: máx 0.5s por tick
+	StaminaService:ConsumeSprint(player, deltaTime)
+end)
+
+-- 5. Helper de inicialización
 local function initializePlayer(player)
 	StaminaService:InitializePlayer(player)
 
 	player.CharacterAdded:Connect(function(character)
 		character:SetAttribute("CombatState", "Idle")
+		-- Forzar R6 en el humanoid
+		local humanoid = character:WaitForChild("Humanoid", 5)
+		if humanoid then
+			humanoid.RigType = Enum.HumanoidRigType.R6
+		end
 	end)
 
-	-- Si el personaje ya existe (ej. "Play Here" en Studio)
 	if player.Character then
 		player.Character:SetAttribute("CombatState", "Idle")
 	end
 end
 
--- 5. Escuchar nuevos jugadores
+-- 6. Conectar y bootstrap
 Players.PlayerAdded:Connect(initializePlayer)
 
--- 6. Bootstrap: jugadores que ya estaban al correr el script (modo "Play Here")
 for _, player in ipairs(Players:GetPlayers()) do
 	initializePlayer(player)
 end

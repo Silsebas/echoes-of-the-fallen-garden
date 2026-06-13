@@ -5,15 +5,15 @@ local CombatConfig = require(ReplicatedStorage.Shared.Combat.CombatConfig)
 
 local StaminaService = {}
 
--- Tabla principal: userId -> { stamina, regenCooldownUntil }
+-- userId -> { stamina, regenCooldownUntil }
 local playersStamina = {}
 
 -- ─── Inicialización / Limpieza ───────────────────────────────────────────────
 
 function StaminaService:InitializePlayer(player)
 	playersStamina[player.UserId] = {
-		stamina          = CombatConfig.Stamina.MaxStamina,
-		regenCooldownUntil = 0, -- timestamp en segundos (os.clock)
+		stamina            = CombatConfig.Stamina.MaxStamina,
+		regenCooldownUntil = 0,
 	}
 	player:SetAttribute("Stamina", CombatConfig.Stamina.MaxStamina)
 	print("[STAMINA] Inicializado para", player.Name)
@@ -24,10 +24,8 @@ function StaminaService:CleanupPlayer(player)
 	print("[STAMINA] Limpiado para", player.Name)
 end
 
--- ─── Consumo ─────────────────────────────────────────────────────────────────
+-- ─── Consumo puntual (ataque, dash) ─────────────────────────────────────────
 
--- Retorna true si había suficiente estamina y la descontó.
--- Tras consumir, aplica un cooldown de RegenDelay antes de que vuelva a regenerar.
 function StaminaService:TryConsumeStamina(player, amount)
 	local data = playersStamina[player.UserId]
 	if not data then return false end
@@ -42,20 +40,39 @@ function StaminaService:TryConsumeStamina(player, amount)
 	return false
 end
 
+-- ─── Consumo continuo (sprint) ───────────────────────────────────────────────
+-- El cliente notifica cuánto tiempo lleva corriendo; el servidor descuenta.
+-- Retorna la stamina actual tras el descuento (para que el cliente sepa si debe parar).
+
+function StaminaService:ConsumeSprint(player, deltaTime)
+	local data = playersStamina[player.UserId]
+	if not data then return 0 end
+
+	local cost = CombatConfig.Sprint.StaminaCostPerSecond * deltaTime
+	data.stamina = math.max(data.stamina - cost, 0)
+	data.regenCooldownUntil = os.clock() + CombatConfig.Stamina.RegenDelay
+	player:SetAttribute("Stamina", data.stamina)
+	return data.stamina
+end
+
+-- ─── Consulta ────────────────────────────────────────────────────────────────
+
+function StaminaService:GetStamina(player)
+	local data = playersStamina[player.UserId]
+	return data and data.stamina or 0
+end
+
 -- ─── Bucle de Regeneración ───────────────────────────────────────────────────
 
-local REGEN_TICK = 1 -- segundos entre cada tick de regen
+local REGEN_TICK = 1
 
 task.spawn(function()
 	while true do
 		task.wait(REGEN_TICK)
-
 		local now = os.clock()
 
 		for userId, data in pairs(playersStamina) do
-			-- No regenerar si estamos en cooldown post-acción
 			if now < data.regenCooldownUntil then continue end
-			-- No regenerar si ya está al máximo
 			if data.stamina >= CombatConfig.Stamina.MaxStamina then continue end
 
 			local newStamina = math.min(
@@ -72,7 +89,6 @@ task.spawn(function()
 	end
 end)
 
--- Limpieza automática cuando el jugador sale
 Players.PlayerRemoving:Connect(function(player)
 	StaminaService:CleanupPlayer(player)
 end)

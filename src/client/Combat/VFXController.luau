@@ -4,62 +4,60 @@ local Players = game:GetService("Players")
 
 local VFXController = {}
 
--- Variables para guardar las animaciones cargadas
 local loadedAnimations = {
-	Attack = nil,
+	Combo1 = nil,
+	Combo2 = nil,
+	Combo3 = nil,
 	Stun = nil
 }
 
--- Función auxiliar para inicializar las animaciones cuando el personaje aparece
 function VFXController:Initialize(character)
 	local humanoid = character:WaitForChild("Humanoid")
-	local animator = humanoid:WaitForChild("Animator")
+	local animator = humanoid:FindFirstChildOfClass("Animator")
+	if not animator then
+		animator = Instance.new("Animator")
+		animator.Parent = humanoid
+	end
+
+	-- Animaciones R6 Combo
+	local animsIds = {
+		Combo1 = "rbxassetid://94084345389206",
+		Combo2 = "rbxassetid://93984961486267",
+		Combo3 = "rbxassetid://115888566299429"
+	}
 	
-	-- IDs de prueba (puedes cambiarlos luego por los de tus rigs definitivos)
-	local attackAnim = Instance.new("Animation")
-	attackAnim.AnimationId = "rbxassetid://522635514"
-	
+	for key, id in pairs(animsIds) do
+		local anim = Instance.new("Animation")
+		anim.AnimationId = id
+		loadedAnimations[key] = animator:LoadAnimation(anim)
+		loadedAnimations[key].Priority = Enum.AnimationPriority.Action
+		loadedAnimations[key].Looped = false
+	end
+
 	local stunAnim = Instance.new("Animation")
-	stunAnim.AnimationId = "rbxassetid://180436148"
-	
-	loadedAnimations.Attack = animator:LoadAnimation(attackAnim)
+	stunAnim.AnimationId = "rbxassetid://180436148" -- Stun R6
+
 	loadedAnimations.Stun = animator:LoadAnimation(stunAnim)
+	loadedAnimations.Stun.Priority = Enum.AnimationPriority.Action
 end
 
-function VFXController:PlayAttackAnimation()
-	if loadedAnimations.Attack then
-		loadedAnimations.Attack:Play()
-	end
+function VFXController:PlayComboAnimation(comboIndex)
+	local animKey = "Combo" .. tostring(comboIndex)
+	local anim = loadedAnimations[animKey]
 	
-	-- Aquí puedes agregar el destello naranja de tu código original
-	local char = Players.LocalPlayer.Character
-	local hrp = char and char:FindFirstChild("HumanoidRootPart")
-	if hrp then
-		-- Ejemplo del trail o destello
-		local slash = Instance.new("Part")
-		slash.Size = Vector3.new(4, 0.2, 4)
-		slash.Color = Color3.fromRGB(255, 120, 0)
-		slash.Material = Enum.Material.Neon
-		slash.CanCollide = false
-		slash.Anchored = true
-		slash.CFrame = hrp.CFrame * CFrame.new(0, 0, -2.5) * CFrame.Angles(math.rad(15), 0, math.rad(45))
-		slash.Parent = workspace
-		
-		TweenService:Create(slash, TweenInfo.new(0.25), {
-			Size = Vector3.new(0.1, 0.1, 0.1), Transparency = 1
-		}):Play()
-		
-		task.delay(0.25, function() slash:Destroy() end)
+	if anim then
+		anim:Stop()
+		anim:Play()
 	end
 end
 
 function VFXController:StartDashGhosts()
 	local char = Players.LocalPlayer.Character
 	if not char then return end
-	
+
 	local active = true
 	task.delay(0.3, function() active = false end)
-	
+
 	task.spawn(function()
 		while active do
 			for _, child in ipairs(char:GetChildren()) do
@@ -73,7 +71,7 @@ function VFXController:StartDashGhosts()
 					ghost.CanCollide = false
 					ghost.Anchored = true
 					ghost.Parent = workspace
-					
+
 					local tween = TweenService:Create(ghost, TweenInfo.new(0.25), {
 						Transparency = 1, Size = child.Size * 0.8
 					})
