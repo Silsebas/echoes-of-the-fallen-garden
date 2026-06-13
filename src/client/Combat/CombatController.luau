@@ -14,8 +14,10 @@ local currentChar   = nil
 
 local comboIndex = 0
 local lastHitTime = 0
+local comboLockedUntil = 0
 local COMBO_WINDOW = 1.2
 local MAX_COMBO = 3
+
 -- ─── Helpers ──────────────────────────────────────────────────────
 
 local function getRemote()
@@ -34,12 +36,8 @@ end
 
 -- Verifica si el jugador tiene un item de curación equipado
 local function tieneItemCuracion()
-	if not currentChar then
-		print("[CC-DEBUG] tieneItemCuracion: currentChar es NIL")
-		return false
-	end
+	if not currentChar then return false end
 	local valor = currentChar:GetAttribute("ItemEquipado")
-	print("[CC-DEBUG] ItemEquipado =", tostring(valor), "| CombatState =", tostring(currentChar:GetAttribute("CombatState")))
 	return valor == "Curacion"
 end
 
@@ -76,6 +74,11 @@ end
 function CombatController:RequestLightAttack()
 	if not currentFSM then return end
 
+	local now = tick()
+	if now < comboLockedUntil then
+		return
+	end
+
 	-- Bloqueado si tiene item de curación en mano
 	if tieneItemCuracion() then
 		print("[CLIENTE] No puedes atacar con un item de curación equipado.")
@@ -87,7 +90,6 @@ function CombatController:RequestLightAttack()
 		return
 	end
 
-	local now = tick()
 	if now - lastHitTime > COMBO_WINDOW then
 		comboIndex = 0
 	end
@@ -99,6 +101,12 @@ function CombatController:RequestLightAttack()
 		VFXController:PlayComboAnimation(comboIndex)
 		local remote = getRemote()
 		if remote then remote:FireServer("LightAttack", comboIndex) end
+	end
+
+	if comboIndex == MAX_COMBO then
+		comboLockedUntil = now + CombatConfig.LightAttack.ComboFinishDelay
+		comboIndex = 0
+		lastHitTime = 0
 	end
 end
 
@@ -125,8 +133,28 @@ function CombatController:RequestDash()
 
 		if hrp and humanoid then
 			local dir = humanoid.MoveDirection
-			if dir.Magnitude == 0 then dir = -hrp.CFrame.LookVector end
-			hrp.AssemblyLinearVelocity = dir * CombatConfig.Dash.DashForce
+			if dir.Magnitude == 0 then
+				dir = hrp.CFrame.LookVector
+			end
+			dir = Vector3.new(dir.X, 0, dir.Z)
+			if dir.Magnitude == 0 then
+				dir = Vector3.new(hrp.CFrame.LookVector.X, 0, hrp.CFrame.LookVector.Z)
+			end
+			if dir.Magnitude > 0 then
+				dir = dir.Unit
+				local isAirborne = humanoid.FloorMaterial == Enum.Material.Air
+				local dashForce = isAirborne and CombatConfig.Dash.AirForce or CombatConfig.Dash.GroundForce
+				local currentVelocity = hrp.AssemblyLinearVelocity
+				hrp.AssemblyLinearVelocity = Vector3.new(dir.X, 0, dir.Z) * dashForce + Vector3.new(0, currentVelocity.Y, 0)
+
+				local impulseDuration = isAirborne and CombatConfig.Dash.AirImpulseDuration or CombatConfig.Dash.GroundImpulseDuration
+				local bodyVelocity = Instance.new("BodyVelocity")
+				bodyVelocity.MaxForce = Vector3.new(1e5, 0, 1e5)
+				bodyVelocity.Velocity = Vector3.new(dir.X, 0, dir.Z) * dashForce
+				bodyVelocity.P = 1250
+				bodyVelocity.Parent = hrp
+				game:GetService("Debris"):AddItem(bodyVelocity, impulseDuration)
+			end
 		end
 
 		local remote = getRemote()

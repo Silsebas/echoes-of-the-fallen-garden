@@ -1,6 +1,7 @@
--- src/client/Controllers/Combat/VFXController.lua
-local TweenService = game:GetService("TweenService")
-local Players = game:GetService("Players")
+-- src/client/Combat/VFXController.luau
+local TweenService      = game:GetService("TweenService")
+local Players           = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local VFXController = {}
 
@@ -8,7 +9,8 @@ local loadedAnimations = {
 	Combo1 = nil,
 	Combo2 = nil,
 	Combo3 = nil,
-	Stun = nil
+	Stun = nil,
+	Dodge = nil,
 }
 
 function VFXController:Initialize(character)
@@ -39,7 +41,23 @@ function VFXController:Initialize(character)
 
 	loadedAnimations.Stun = animator:LoadAnimation(stunAnim)
 	loadedAnimations.Stun.Priority = Enum.AnimationPriority.Action
+
+	local dodgeAnim = Instance.new("Animation")
+	dodgeAnim.AnimationId = "rbxassetid://89081996549243" -- Dodge animation
+
+	loadedAnimations.Dodge = animator:LoadAnimation(dodgeAnim)
+	loadedAnimations.Dodge.Priority = Enum.AnimationPriority.Movement
+	loadedAnimations.Dodge.Looped = false
 end
+
+function VFXController:PlayDodgeAnimation()
+	local dodgeAnim = loadedAnimations.Dodge
+	if not dodgeAnim then return end
+	dodgeAnim:Stop()
+	dodgeAnim:Play()
+end
+
+-- ─── Combo ────────────────────────────────────────────────────────
 
 function VFXController:PlayComboAnimation(comboIndex)
 	local animKey = "Combo" .. tostring(comboIndex)
@@ -51,9 +69,13 @@ function VFXController:PlayComboAnimation(comboIndex)
 	end
 end
 
+-- ─── Dodge ────────────────────────────────────────────────────────
+
 function VFXController:StartDashGhosts()
 	local char = Players.LocalPlayer.Character
 	if not char then return end
+
+	self:PlayDodgeAnimation()
 
 	local active = true
 	task.delay(0.3, function() active = false end)

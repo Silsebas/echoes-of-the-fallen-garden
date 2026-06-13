@@ -14,7 +14,7 @@ CombatState.States = {
 -- Transiciones válidas: qué estados puede originar cada acción.
 -- El servidor y el cliente usan esta misma tabla para validar.
 CombatState.ValidTransitions = {
-	Attacking = { Idle = true, Dodging = true },
+	Attacking = { Idle = true, Dodging = true, Attacking = true },
 	Dodging   = { Idle = true, Attacking = true },
 	Stunned   = { Idle = true, Attacking = true, Dodging = true },
 	Parrying  = { Idle = true },
@@ -33,6 +33,7 @@ end
 function CombatState.createMachine(_character)
 	local state     = CombatState.States.Idle
 	local listeners = {}
+	local transitionId = 0
 
 	local machine = {}
 
@@ -59,15 +60,15 @@ function CombatState.createMachine(_character)
 	-- Si duration > 0, regresa automáticamente a Idle después de ese tiempo.
 	-- Retorna true si la transición fue aceptada.
 	function machine:TransitionTo(newState, duration)
-		if newState == state then return false end
-
-		-- Validar que la transición sea legal
-		if not CombatState.canTransition(state, newState) then
+		-- Permitir volver a entrar en el mismo estado si la transición está permitida.
+		if newState == state and not CombatState.canTransition(state, newState) then
 			return false
 		end
 
 		local oldState = state
 		state = newState
+		transitionId += 1
+		local currentTransition = transitionId
 
 		for _, fn in ipairs(listeners) do
 			pcall(fn, newState, oldState)
@@ -75,7 +76,7 @@ function CombatState.createMachine(_character)
 
 		if type(duration) == "number" and duration > 0 then
 			task.delay(duration, function()
-				if state == newState then
+				if currentTransition == transitionId and state == newState then
 					local prev = state
 					state = CombatState.States.Idle
 					for _, fn in ipairs(listeners) do

@@ -16,7 +16,7 @@ local playerData = {}
 local Players = game:GetService("Players")
 
 Players.PlayerAdded:Connect(function(player)
-	playerData[player] = {combo = 0, lastHit = 0, debounce = false}
+	playerData[player] = {combo = 0, lastHit = 0, debounce = false, lockedUntil = 0}
 end)
 Players.PlayerRemoving:Connect(function(player)
 	playerData[player] = nil
@@ -59,14 +59,16 @@ local actionHandlers = {
 			data = {combo = 0, lastHit = 0, debounce = false}
 			playerData[player] = data
 		end
-		if data.debounce then return end
+		local now = tick()
+		if data.debounce or now < data.lockedUntil then
+			return
+		end
 
 		if not StaminaService:TryConsumeStamina(player, CombatConfig.LightAttack.StaminaCost) then
 			print("[SERVER] Ataque denegado (sin estamina):", player.Name)
 			return
 		end
 
-		local now = tick()
 		if (now - data.lastHit) > COMBO_WINDOW then
 			data.combo = 0
 		end
@@ -81,7 +83,12 @@ local actionHandlers = {
 		print("[SERVER] Ataque aprobado:", player.Name, "Combo:", actualCombo)
 		applyTemporaryState(character, CombatState.States.Attacking, 0.5)
 
-		task.delay(0.2, function()
+		if actualCombo == MAX_COMBO then
+			data.combo = 0
+			data.lockedUntil = now + CombatConfig.LightAttack.ComboFinishDelay
+		end
+
+		task.delay(0.05, function()
 			HitboxService.create(character, damage, function(targetModel, hitPos)
 				local sfxName = "m1_" .. actualCombo
 				local sfx = sfxFolder:FindFirstChild(sfxName)
@@ -94,7 +101,12 @@ local actionHandlers = {
 			end)
 		end)
 
-		task.delay(0.5, function()
+		local debounceTime = CombatConfig.LightAttack.Cooldown + 0.1
+		if actualCombo == MAX_COMBO then
+			debounceTime = debounceTime + CombatConfig.LightAttack.ComboFinishDelay
+		end
+
+		task.delay(debounceTime, function()
 			if data then data.debounce = false end
 		end)
 	end,

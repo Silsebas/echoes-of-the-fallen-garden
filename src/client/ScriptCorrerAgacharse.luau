@@ -10,35 +10,27 @@ local AlmacenReplicado = game:GetService("ReplicatedStorage")
 local Iluminacion      = game:GetService("Lighting")
 local GuiJugador       = JugadorLocal:WaitForChild("PlayerGui")
 
--- Remotes
 local CarpetaSprintCrouch = AlmacenReplicado:WaitForChild("Sprint&Chrouch")
 local EventoSprint        = CarpetaSprintCrouch:WaitForChild("Sprinting")
 local EventoCrouch        = CarpetaSprintCrouch:WaitForChild("Chrouching")
 
--- SprintTick: notifica al servidor cada tick para descontar stamina compartida
-local SprintTickRemote = AlmacenReplicado.Shared.Remotes.CombatEvents:WaitForChild("SprintTick", 10)
-
--- Personaje
 local personaje = JugadorLocal.Character or JugadorLocal.CharacterAdded:Wait()
 local cuerpo    = personaje:WaitForChild("Humanoid")
 local camara    = workspace.CurrentCamera
 
--- UI Sprint
-local InterfazSprint = GuiJugador:WaitForChild("SprintUI")
-local FondoBarra     = InterfazSprint:WaitForChild("BarraSprintFondo")
-local Barra          = FondoBarra:WaitForChild("BarraSprint")
-local ValorStamina   = InterfazSprint:WaitForChild("Stamina")
-local SFXError       = InterfazSprint:WaitForChild("Sonidos"):WaitForChild("Error")
-local SFXAgitado     = InterfazSprint:WaitForChild("Sonidos"):WaitForChild("Agitado")
+local InterfazSprint    = GuiJugador:WaitForChild("SprintUI")
+local FondoBarra        = InterfazSprint:WaitForChild("BarraSprintFondo")
+local Barra             = FondoBarra:WaitForChild("BarraSprint")
+local ValorStamina      = InterfazSprint:WaitForChild("Stamina")
+local SFXError          = InterfazSprint:WaitForChild("Sonidos"):WaitForChild("Error")
+local SFXAgitado        = InterfazSprint:WaitForChild("Sonidos"):WaitForChild("Agitado")
 local CorreccionAgitado = Iluminacion:WaitForChild("SprintAgitado")
-local TextoError     = InterfazSprint:WaitForChild("Error")
-local BotonSprint    = InterfazSprint:WaitForChild("UICelulares"):WaitForChild("SprintMobil")
+local TextoError        = InterfazSprint:WaitForChild("Error")
+local BotonSprint       = InterfazSprint:WaitForChild("UICelulares"):WaitForChild("SprintMobil")
 
--- UI Crouch
 local InterfazCrouch = GuiJugador:WaitForChild("AgacharseUI")
 local BotonCrouch    = InterfazCrouch:WaitForChild("UICelulares"):WaitForChild("AgacharseMobil")
 
--- Animaciones
 local AnimacionSprint     = script:WaitForChild("CorrerAnim")
 local AnimacionCrouchIdle = script:WaitForChild("AgacharseIdle")
 local AnimacionCrouchMove = script:WaitForChild("AgacharseMover")
@@ -54,9 +46,9 @@ local Fov_Normal    = 70
 local Fov_Correr    = 90
 local Fov_Agacharse = 55
 
-local STAMINA_MAXIMA         = 100
-local MinStaminaParaSprint   = 15   -- debe tener al menos esto para arrancar
-local Tasa_Disminucion       = 10   -- debe coincidir con CombatConfig.Sprint.StaminaCostPerSecond
+local STAMINA_MAXIMA          = 100
+local Tasa_Disminucion_Stamina = 10
+local Tasa_Recuperacion_Stamina = 5
 
 local TECLA_SPRINT = Enum.KeyCode.LeftShift
 local TECLA_CROUCH = Enum.KeyCode.LeftControl
@@ -84,9 +76,15 @@ local trackSprint     = nil
 local trackCrouchIdle = nil
 local trackCrouchMove = nil
 
--- Lee la stamina desde el Attribute del servidor (stamina compartida)
-local function getStamina()
-	return JugadorLocal:GetAttribute("Stamina") or STAMINA_MAXIMA
+-- Stamina local — es la fuente de verdad en el cliente.
+-- Se sincroniza con el Attribute del Player para que el CombatController
+-- y el servidor lean siempre el mismo valor.
+local stamina = JugadorLocal:GetAttribute("Stamina") or STAMINA_MAXIMA
+ValorStamina.Value = stamina
+
+local function sincronizarStamina()
+	JugadorLocal:SetAttribute("Stamina", stamina)
+	ValorStamina.Value = math.floor(stamina)
 end
 
 ----------------------------------------------------------------------
@@ -115,14 +113,12 @@ local function detenerTracks()
 end
 
 local function actualizarBarraStamina()
-	local proporcion = getStamina() / STAMINA_MAXIMA
+	local proporcion = stamina / STAMINA_MAXIMA
 	ServicioTween:Create(Barra, TweenInfo.new(0.1), {Size = UDim2.new(proporcion, 0, 1, 0)}):Play()
-	ValorStamina.Value = math.floor(getStamina())
 end
 
 local function actualizarEfectosAgitado()
-	local stamina = getStamina()
-	local factor  = stamina < 25 and (1 - stamina / 25) or 0
+	local factor = stamina < 25 and (1 - stamina / 25) or 0
 	ServicioTween:Create(CorreccionAgitado, TweenInfo.new(0.5), {
 		Brightness = factor * Brillo,
 		Contrast   = factor * Contraste,
@@ -140,6 +136,25 @@ local function moverBarraStamina(arriba)
 	local pos = arriba and UDim2.new(0, 0, 0.99, 0) or UDim2.new(0, 0, 1, 0)
 	ServicioTween:Create(FondoBarra, TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = pos}):Play()
 end
+
+----------------------------------------------------------------------
+-- Sincronizar cuando el SERVIDOR cambia la stamina (ataque/dash)
+-- El servidor descuenta via SetAttribute — el cliente lo refleja aquí
+----------------------------------------------------------------------
+JugadorLocal:GetAttributeChangedSignal("Stamina"):Connect(function()
+	local serverValue = JugadorLocal:GetAttribute("Stamina")
+	-- Sincronizar siempre que el servidor tenga un valor diferente al local
+	-- Esto cubre descuentos por ataque y dash además del sprint
+	if serverValue ~= stamina then
+		stamina = serverValue
+		actualizarBarraStamina()
+		actualizarEfectosAgitado()
+		-- Si sprint y se quedó sin stamina, parar
+		if estado == "sprint" and stamina <= 0 then
+			setEstado("normal")
+		end
+	end
+end)
 
 ----------------------------------------------------------------------
 -- MÁQUINA DE ESTADOS
@@ -165,7 +180,9 @@ local function setEstado(nuevoEstado)
 		moverBarraStamina(false)
 
 	elseif nuevoEstado == "sprint" then
-		if cuerpo.Health <= VidaBajaSprint then
+		-- Bloquear si vida muy baja o en estado de agonía
+		local enAgonia = personaje:GetAttribute("VidaBaja") == true
+		if cuerpo.Health <= VidaBajaSprint or enAgonia then
 			TextoError.Visible = true
 			TextoError.Text    = TextoVidaBaja
 			SFXError:Play()
@@ -173,12 +190,6 @@ local function setEstado(nuevoEstado)
 				TextoError.Text    = ""
 				TextoError.Visible = false
 			end)
-			estado = "normal"
-			return
-		end
-
-		-- Verificar stamina mínima para arrancar
-		if getStamina() < MinStaminaParaSprint then
 			estado = "normal"
 			return
 		end
@@ -203,28 +214,16 @@ local function setEstado(nuevoEstado)
 
 		EventoSprint:FireServer(true)
 
-		-- Loop que notifica al servidor para descontar stamina compartida
 		task.spawn(function()
-			local ultimoTick = os.clock()
-			while estado == "sprint" do
+			while estado == "sprint" and stamina > 0 do
 				task.wait(0.1)
-				local ahora = os.clock()
-				local delta = ahora - ultimoTick
-				ultimoTick  = ahora
-
-				-- Notificar al servidor
-				if SprintTickRemote then
-					SprintTickRemote:FireServer(delta)
-				end
-
+				stamina = math.max(stamina - Tasa_Disminucion_Stamina * 0.1, 0)
+				sincronizarStamina()   -- <-- actualiza Attribute para CombatController
 				actualizarBarraStamina()
 				actualizarEfectosAgitado()
-
-				-- Parar si la stamina compartida llegó a 0
-				if getStamina() <= 0 then
-					setEstado("normal")
-					return
-				end
+			end
+			if stamina <= 0 and estado == "sprint" then
+				setEstado("normal")
 			end
 		end)
 
@@ -242,10 +241,17 @@ local function setEstado(nuevoEstado)
 	end
 end
 
--- Escuchar cambios del Attribute de Stamina (sincronización del servidor)
-JugadorLocal:GetAttributeChangedSignal("Stamina"):Connect(function()
-	actualizarBarraStamina()
-	actualizarEfectosAgitado()
+-- Regen de stamina
+task.spawn(function()
+	while true do
+		task.wait(0.1)
+		if estado ~= "sprint" and stamina < STAMINA_MAXIMA then
+			stamina = math.min(stamina + Tasa_Recuperacion_Stamina * 0.1, STAMINA_MAXIMA)
+			sincronizarStamina()   -- <-- mantiene Attribute sincronizado durante regen
+			actualizarBarraStamina()
+			actualizarEfectosAgitado()
+		end
+	end
 end)
 
 ----------------------------------------------------------------------
@@ -350,10 +356,12 @@ end)
 JugadorLocal.CharacterAdded:Connect(function(nuevoPersonaje)
 	personaje = nuevoPersonaje
 	cuerpo    = nuevoPersonaje:WaitForChild("Humanoid")
-	camara.FieldOfView   = Fov_Normal
-	cuerpo.WalkSpeed     = Velocidad_Normal
-	estado               = "normal"
-	trackSprint          = nil
-	trackCrouchIdle      = nil
-	trackCrouchMove      = nil
+	camara.FieldOfView = Fov_Normal
+	cuerpo.WalkSpeed   = Velocidad_Normal
+	estado             = "normal"
+	trackSprint        = nil
+	trackCrouchIdle    = nil
+	trackCrouchMove    = nil
+	stamina            = JugadorLocal:GetAttribute("Stamina") or STAMINA_MAXIMA
+	sincronizarStamina()
 end)
