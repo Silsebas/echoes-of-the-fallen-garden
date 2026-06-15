@@ -36,6 +36,15 @@ if not sprintTickRemote then
 	sprintTickRemote.Parent = combatEventsFolder
 end
 
+local function allowSandboxedScripts(remote)
+	pcall(function()
+		remote.Sandboxed = true
+	end)
+end
+
+allowSandboxedScripts(requestActionRemote)
+allowSandboxedScripts(sprintTickRemote)
+
 print("[SERVER] Remotes configurados correctamente.")
 
 -- 2. Requerir Servicios

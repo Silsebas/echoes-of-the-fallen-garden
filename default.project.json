@@ -5,6 +5,18 @@
 
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",
+      "CurarJugador": {
+        "$className": "RemoteEvent",
+        "$properties": {
+          "Sandboxed": true
+        }
+      },
+      "MedkitDisappear": {
+        "$className": "RemoteEvent",
+        "$properties": {
+          "Sandboxed": true
+        }
+      },
       "Shared": {
         "$path": "src/shared"
       }
@@ -18,11 +30,22 @@
     },
 
     "StarterPlayer": {
-     "$className": "StarterPlayer",
+      "$className": "StarterPlayer",
+      "StarterCharacterScripts": {
+        "$className": "StarterCharacterScripts",
+        "ScriptCorrerAgacharse": {
+          "$path": "src/character/ScriptCorrerAgacharse.client.luau"
+        }
+      },
       "StarterPlayerScripts": {
         "$className": "StarterPlayerScripts",
         "Client": {
-          "$path": "src/client"
+          "$className": "LocalScript",
+          "$path": "src/client/init.client.luau",
+          "Combat": {
+            "$className": "Folder",
+            "$path": "src/client/Combat"
+          }
         }
       }
     },
@@ -35,38 +58,24 @@
         "$className": "Part",
         "$properties": {
           "Anchored": true,
-          "Color": [
-            0.38823,
-            0.37254,
-            0.38823
-          ],
+          "Color": [0.38823, 0.37254, 0.38823],
           "Locked": true,
-          "Position": [
-            0,
-            -10,
-            0
-          ],
-          "Size": [
-            512,
-            20,
-            512
-          ]
+          "Position": [0, -10, 0],
+          "Size": [512, 20, 512]
         }
       }
     },
+
     "Lighting": {
       "$properties": {
-        "Ambient": [
-          0,
-          0,
-          0
-        ],
+        "Ambient": [0, 0, 0],
         "Brightness": 2,
         "GlobalShadows": true,
         "Outlines": false,
         "Technology": "Voxel"
       }
     },
+
     "SoundService": {
       "$properties": {
         "RespectFilteringEnabled": true

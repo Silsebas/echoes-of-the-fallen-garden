@@ -1,4 +1,4 @@
--- src/client/ScriptCorrerAgacharse.luau
+-- src/character/ScriptCorrerAgacharse.client.luau
 -- Ubicación en Studio: StarterPlayer > StarterCharacterScripts
 
 local Jugadores        = game:GetService("Players")
@@ -10,8 +10,13 @@ local AlmacenReplicado = game:GetService("ReplicatedStorage")
 local Iluminacion      = game:GetService("Lighting")
 local GuiJugador       = JugadorLocal:WaitForChild("PlayerGui")
 
+local SprintTickRemote = AlmacenReplicado
+	:WaitForChild("Shared")
+	:WaitForChild("Remotes")
+	:WaitForChild("CombatEvents")
+	:WaitForChild("SprintTick")
+
 local CarpetaSprintCrouch = AlmacenReplicado:WaitForChild("Sprint&Chrouch")
-local EventoSprint        = CarpetaSprintCrouch:WaitForChild("Sprinting")
 local EventoCrouch        = CarpetaSprintCrouch:WaitForChild("Chrouching")
 
 local personaje = JugadorLocal.Character or JugadorLocal.CharacterAdded:Wait()
@@ -31,9 +36,15 @@ local BotonSprint       = InterfazSprint:WaitForChild("UICelulares"):WaitForChil
 local InterfazCrouch = GuiJugador:WaitForChild("AgacharseUI")
 local BotonCrouch    = InterfazCrouch:WaitForChild("UICelulares"):WaitForChild("AgacharseMobil")
 
-local AnimacionSprint     = script:WaitForChild("CorrerAnim")
-local AnimacionCrouchIdle = script:WaitForChild("AgacharseIdle")
-local AnimacionCrouchMove = script:WaitForChild("AgacharseMover")
+-- Animaciones creadas directamente (sin depender de objetos hijos en Studio)
+local AnimacionSprint     = Instance.new("Animation")
+AnimacionSprint.AnimationId = "rbxassetid://106556865443632"
+
+local AnimacionCrouchIdle = Instance.new("Animation")
+AnimacionCrouchIdle.AnimationId = "rbxassetid://112446651572598"
+
+local AnimacionCrouchMove = Instance.new("Animation")
+AnimacionCrouchMove.AnimationId = "rbxassetid://135913186867527"
 
 ----------------------------------------------------------------------
 -- CONFIGURACION
@@ -46,9 +57,8 @@ local Fov_Normal    = 70
 local Fov_Correr    = 90
 local Fov_Agacharse = 55
 
-local STAMINA_MAXIMA          = 100
-local Tasa_Disminucion_Stamina = 10
-local Tasa_Recuperacion_Stamina = 5
+local STAMINA_MAXIMA = 100
+local STAMINA_MINIMA_PARA_SPRINT = 15
 
 local TECLA_SPRINT = Enum.KeyCode.LeftShift
 local TECLA_CROUCH = Enum.KeyCode.LeftControl
@@ -60,6 +70,7 @@ local Puede_Alternar_Crouch  = true
 
 local VidaBajaSprint = 15
 local TextoVidaBaja  = "No puedes correr con poca salud."
+local TextoSinStamina = "No tienes suficiente stamina."
 local TiempoMensaje  = 2
 local Volumen_Agitado = 0.25
 
@@ -75,6 +86,7 @@ local estado          = "normal"
 local trackSprint     = nil
 local trackCrouchIdle = nil
 local trackCrouchMove = nil
+local setEstado
 
 -- Stamina local — es la fuente de verdad en el cliente.
 -- Se sincroniza con el Attribute del Player para que el CombatController
@@ -83,7 +95,6 @@ local stamina = JugadorLocal:GetAttribute("Stamina") or STAMINA_MAXIMA
 ValorStamina.Value = stamina
 
 local function sincronizarStamina()
-	JugadorLocal:SetAttribute("Stamina", stamina)
 	ValorStamina.Value = math.floor(stamina)
 end
 
@@ -143,6 +154,7 @@ end
 ----------------------------------------------------------------------
 JugadorLocal:GetAttributeChangedSignal("Stamina"):Connect(function()
 	local serverValue = JugadorLocal:GetAttribute("Stamina")
+	if type(serverValue) ~= "number" then return end
 	-- Sincronizar siempre que el servidor tenga un valor diferente al local
 	-- Esto cubre descuentos por ataque y dash además del sprint
 	if serverValue ~= stamina then
@@ -159,14 +171,13 @@ end)
 ----------------------------------------------------------------------
 -- MÁQUINA DE ESTADOS
 ----------------------------------------------------------------------
-local function setEstado(nuevoEstado)
+function setEstado(nuevoEstado)
 	if estado == nuevoEstado then return end
 
 	if estado == "sprint" then
 		detenerTracks()
 		ServicioTween:Create(cuerpo, TweenInfo.new(0.3), {WalkSpeed = Velocidad_Normal}):Play()
 		ServicioTween:Create(camara, TweenInfo.new(0.3), {FieldOfView = Fov_Normal}):Play()
-		EventoSprint:FireServer(false)
 	elseif estado == "crouch" then
 		detenerTracks()
 		ServicioTween:Create(cuerpo, TweenInfo.new(0.3), {WalkSpeed = Velocidad_Normal}):Play()
@@ -194,6 +205,18 @@ local function setEstado(nuevoEstado)
 			return
 		end
 
+		if stamina < STAMINA_MINIMA_PARA_SPRINT then
+			TextoError.Visible = true
+			TextoError.Text    = TextoSinStamina
+			SFXError:Play()
+			task.delay(TiempoMensaje, function()
+				TextoError.Text    = ""
+				TextoError.Visible = false
+			end)
+			estado = "normal"
+			return
+		end
+
 		if not esSprintMovil and cuerpo.MoveDirection.Magnitude == 0 then
 			task.wait(0.15)
 			if cuerpo.MoveDirection.Magnitude == 0 then
@@ -212,15 +235,10 @@ local function setEstado(nuevoEstado)
 			trackSprint:Play()
 		end
 
-		EventoSprint:FireServer(true)
-
 		task.spawn(function()
 			while estado == "sprint" and stamina > 0 do
 				task.wait(0.1)
-				stamina = math.max(stamina - Tasa_Disminucion_Stamina * 0.1, 0)
-				sincronizarStamina()   -- <-- actualiza Attribute para CombatController
-				actualizarBarraStamina()
-				actualizarEfectosAgitado()
+				SprintTickRemote:FireServer(0.1)
 			end
 			if stamina <= 0 and estado == "sprint" then
 				setEstado("normal")
@@ -241,18 +259,9 @@ local function setEstado(nuevoEstado)
 	end
 end
 
--- Regen de stamina
-task.spawn(function()
-	while true do
-		task.wait(0.1)
-		if estado ~= "sprint" and stamina < STAMINA_MAXIMA then
-			stamina = math.min(stamina + Tasa_Recuperacion_Stamina * 0.1, STAMINA_MAXIMA)
-			sincronizarStamina()   -- <-- mantiene Attribute sincronizado durante regen
-			actualizarBarraStamina()
-			actualizarEfectosAgitado()
-		end
-	end
-end)
+sincronizarStamina()
+actualizarBarraStamina()
+actualizarEfectosAgitado()
 
 ----------------------------------------------------------------------
 -- SWITCH ANIMACION CROUCH
@@ -364,4 +373,6 @@ JugadorLocal.CharacterAdded:Connect(function(nuevoPersonaje)
 	trackCrouchMove    = nil
 	stamina            = JugadorLocal:GetAttribute("Stamina") or STAMINA_MAXIMA
 	sincronizarStamina()
+	actualizarBarraStamina()
+	actualizarEfectosAgitado()
 end)

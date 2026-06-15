@@ -8,12 +8,44 @@ local StaminaService = {}
 -- userId -> { stamina, regenCooldownUntil }
 local playersStamina = {}
 
+local function getOrCreateData(player)
+	local data = playersStamina[player.UserId]
+	if data then
+		return data
+	end
+
+	data = {
+		stamina            = CombatConfig.Stamina.MaxStamina,
+		regenCooldownUntil = 0,
+		lastSprintTickAt   = 0,
+	}
+	playersStamina[player.UserId] = data
+	player:SetAttribute("Stamina", data.stamina)
+	return data
+end
+
+local function setStamina(player, data, stamina)
+	data.stamina = math.clamp(stamina, 0, CombatConfig.Stamina.MaxStamina)
+	player:SetAttribute("Stamina", data.stamina)
+	return data.stamina
+end
+
+local function syncFromAttribute(player, data)
+	local attrStamina = player:GetAttribute("Stamina")
+	if type(attrStamina) == "number" then
+		data.stamina = math.clamp(attrStamina, 0, CombatConfig.Stamina.MaxStamina)
+	end
+
+	return data.stamina
+end
+
 -- ─── Inicialización / Limpieza ───────────────────────────────────────────────
 
 function StaminaService:InitializePlayer(player)
 	playersStamina[player.UserId] = {
 		stamina            = CombatConfig.Stamina.MaxStamina,
 		regenCooldownUntil = 0,
+		lastSprintTickAt   = 0,
 	}
 	player:SetAttribute("Stamina", CombatConfig.Stamina.MaxStamina)
 	print("[STAMINA] Inicializado para", player.Name)
@@ -27,13 +59,12 @@ end
 -- ─── Consumo puntual (ataque, dash) ─────────────────────────────────────────
 
 function StaminaService:TryConsumeStamina(player, amount)
-	local data = playersStamina[player.UserId]
+	local data = getOrCreateData(player)
 	if not data then return false end
 
 	if data.stamina >= amount then
-		data.stamina = data.stamina - amount
 		data.regenCooldownUntil = os.clock() + CombatConfig.Stamina.RegenDelay
-		player:SetAttribute("Stamina", data.stamina)
+		setStamina(player, data, data.stamina - amount)
 		return true
 	end
 
@@ -45,21 +76,30 @@ end
 -- Retorna la stamina actual tras el descuento (para que el cliente sepa si debe parar).
 
 function StaminaService:ConsumeSprint(player, deltaTime)
-	local data = playersStamina[player.UserId]
+	local data = getOrCreateData(player)
 	if not data then return 0 end
 
+	local character = player.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not humanoid or humanoid.Health <= 0 then
+		return data.stamina
+	end
+
+	deltaTime = math.clamp(deltaTime, 0, 0.5)
+	if deltaTime <= 0 or data.stamina <= 0 then
+		return data.stamina
+	end
+
 	local cost = CombatConfig.Sprint.StaminaCostPerSecond * deltaTime
-	data.stamina = math.max(data.stamina - cost, 0)
 	data.regenCooldownUntil = os.clock() + CombatConfig.Stamina.RegenDelay
-	player:SetAttribute("Stamina", data.stamina)
-	return data.stamina
+	return setStamina(player, data, data.stamina - cost)
 end
 
 -- ─── Consulta ────────────────────────────────────────────────────────────────
 
 function StaminaService:GetStamina(player)
-	local data = playersStamina[player.UserId]
-	return data and data.stamina or 0
+	local data = getOrCreateData(player)
+	return syncFromAttribute(player, data)
 end
 
 -- ─── Bucle de Regeneración ───────────────────────────────────────────────────
@@ -75,15 +115,14 @@ task.spawn(function()
 			if now < data.regenCooldownUntil then continue end
 			if data.stamina >= CombatConfig.Stamina.MaxStamina then continue end
 
+			local player = Players:GetPlayerByUserId(userId)
 			local newStamina = math.min(
 				data.stamina + CombatConfig.Stamina.RegenRate,
 				CombatConfig.Stamina.MaxStamina
 			)
-			data.stamina = newStamina
 
-			local player = Players:GetPlayerByUserId(userId)
 			if player then
-				player:SetAttribute("Stamina", newStamina)
+				setStamina(player, data, newStamina)
 			end
 		end
 	end
